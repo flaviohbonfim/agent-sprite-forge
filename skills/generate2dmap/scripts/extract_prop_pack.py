@@ -23,6 +23,31 @@ def color_distance(rgb: tuple[int, int, int], target: tuple[int, int, int] = MAG
     return math.sqrt((r - tr) ** 2 + (g - tg) ** 2 + (b - tb) ** 2)
 
 
+def is_magenta_hue(r: int, g: int, b: int, min_channel: int = 70) -> bool:
+    """Catches chroma-key magenta that has darkened/blended toward a dark
+    foreground colour during anti-aliasing. Its RGB drifts far from pure
+    (255, 0, 255) in absolute distance — color_distance() above misses it,
+    e.g. (112, 34, 111) measures ~206 away, past both the 100 and 150
+    thresholds — but it keeps the magenta HUE signature: red and blue
+    nearly equal, green clearly the lowest channel. Verified against real
+    leftover fringe pixels around extracted map props (iron door, cracked
+    wall, moss tree — all measured R/B within 1 of each other, G at
+    18-30% of R/B).
+
+    `min_channel=70` is load-bearing, not a tuning nicety: a first version
+    of this used a proportional gap (e.g. `g < r*0.75`) with no floor, and
+    it stripped a boss's near-black dark-purple cloak shading (R/G/B all
+    ~24-30) — ratio tests are unstable at low brightness, where small
+    absolute differences look like huge ratios. The real contamination
+    this function targets never measured below R/B~108. 70 leaves margin
+    below that while sitting safely above legitimate near-black shading."""
+    if r < min_channel or b < min_channel:
+        return False
+    if abs(r - b) > 8:
+        return False
+    return g < r * 0.6 and g < b * 0.6
+
+
 def remove_bg_magenta(img: Image.Image, threshold: int, edge_threshold: int) -> Image.Image:
     img = img.convert("RGBA")
     pixels = img.load()
@@ -31,7 +56,7 @@ def remove_bg_magenta(img: Image.Image, threshold: int, edge_threshold: int) -> 
     for x in range(width):
         for y in range(height):
             r, g, b, a = pixels[x, y]
-            if a > 0 and color_distance((r, g, b)) < threshold:
+            if a > 0 and (color_distance((r, g, b)) < threshold or is_magenta_hue(r, g, b)):
                 pixels[x, y] = (0, 0, 0, 0)
 
     visited: set[tuple[int, int]] = set()
@@ -50,7 +75,7 @@ def remove_bg_magenta(img: Image.Image, threshold: int, edge_threshold: int) -> 
         visited.add((x, y))
         r, g, b, a = pixels[x, y]
         should_expand = a == 0
-        if a > 0 and color_distance((r, g, b)) < edge_threshold:
+        if a > 0 and (color_distance((r, g, b)) < edge_threshold or is_magenta_hue(r, g, b)):
             pixels[x, y] = (0, 0, 0, 0)
             should_expand = True
         if should_expand:

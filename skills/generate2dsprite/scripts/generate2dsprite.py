@@ -386,6 +386,29 @@ def build_prompt(target: str, mode: str, prompt: str, role: str | None = None, s
     return result, seed
 
 
+def is_magenta_hue(r: int, g: int, b: int, min_channel: int = 70) -> bool:
+    """Catches chroma-key magenta that has darkened/blended toward a dark
+    foreground colour during anti-aliasing. Its RGB drifts far from pure
+    (255, 0, 255) in absolute distance — e.g. (112, 34, 111) measures ~206
+    away, past both the threshold and edge_threshold defaults — but it
+    keeps the magenta HUE signature: red and blue nearly equal, green
+    clearly the lowest channel. Verified against real leftover fringe on a
+    character walk sheet and a boss attack sheet.
+
+    `min_channel=70` is load-bearing, not a tuning nicety: a first version
+    used a proportional gap with no floor and stripped a boss's legitimate
+    near-black dark-purple cloak shading (R/G/B all ~24-30) — ratio tests
+    are unstable at low brightness, where small absolute differences look
+    like huge ratios. Real contamination measured never below R/B~108; 70
+    leaves margin below that while staying above legitimate near-black
+    shading."""
+    if r < min_channel or b < min_channel:
+        return False
+    if abs(r - b) > 8:
+        return False
+    return g < r * 0.6 and g < b * 0.6
+
+
 def remove_bg_magenta(img: Image.Image, threshold: int = 100, edge_threshold: int = 150) -> Image.Image:
     pixels = img.load()
     width, height = img.size
@@ -398,7 +421,7 @@ def remove_bg_magenta(img: Image.Image, threshold: int = 100, edge_threshold: in
             r, g, b, a = pixels[x, y]
             if a == 0:
                 continue
-            if dist(r, g, b) < threshold:
+            if dist(r, g, b) < threshold or is_magenta_hue(r, g, b):
                 pixels[x, y] = (0, 0, 0, 0)
 
     visited: set[tuple[int, int]] = set()
@@ -423,7 +446,7 @@ def remove_bg_magenta(img: Image.Image, threshold: int = 100, edge_threshold: in
                         continue
                     if (x + dx, y + dy) not in visited:
                         queue.append((x + dx, y + dy))
-        elif dist(r, g, b) < edge_threshold:
+        elif dist(r, g, b) < edge_threshold or is_magenta_hue(r, g, b):
             pixels[x, y] = (0, 0, 0, 0)
             for dx in (-1, 0, 1):
                 for dy in (-1, 0, 1):
